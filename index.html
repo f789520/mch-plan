@@ -16,6 +16,7 @@
       <button class="tab on" data-tab="items">物件</button>
       <button class="tab" data-tab="zones">區域</button>
       <button class="tab" data-tab="view">檢視</button>
+      <button class="tab" data-tab="saves">存檔</button>
       <button class="tab" data-tab="share">共用</button>
     </div>
 
@@ -42,6 +43,15 @@
       </div>
       <button id="btn-clear" class="danger">清空全部</button>
       <input type="file" id="file" accept=".json" hidden>
+    </div>
+
+    <div class="pane hide" id="pane-saves">
+      <p class="hint">把目前整張圖存成一個版本，之後隨時載回。版本存在這台電腦；連線共用時全部人共享同一份版本清單。</p>
+      <div class="row">
+        <input type="text" id="sv-name" placeholder="版本名稱，例如 方案A 三區">
+        <button id="sv-add">存檔</button>
+      </div>
+      <div id="sv-list"></div>
     </div>
 
     <div class="pane hide" id="pane-share">
@@ -122,6 +132,14 @@ label.stack input,label.stack textarea{width:100%;margin-top:3px;padding:5px 6px
 .fbstat.on{background:#e1f5ee;color:#0f6e56}
 .fbstat.err{background:#fcebeb;color:#a32d2d}
 #fb-link{width:100%;padding:6px;font-size:12px;border:1px solid #ddd;background:#fff;border-radius:5px;cursor:pointer}
+#sv-name{flex:2;padding:5px 6px;border:1px solid #ddd;border-radius:4px;font-size:12px}
+#sv-add{flex:1}
+.sv{display:flex;align-items:center;gap:6px;padding:6px 8px;margin-bottom:3px;background:#fff;border:1px solid #e6e4dc;border-radius:5px;font-size:12px}
+.sv .nm{flex:1;min-width:0}
+.sv .nm b{display:block;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sv .nm small{color:#aaa;font-size:10px}
+.sv button{padding:3px 8px;font-size:11px;border:1px solid #ddd;background:#fff;border-radius:4px;cursor:pointer}
+.sv .rm{color:#c33;border-color:#eecccc}
 .row button,#btn-clear{flex:1;padding:6px;font-size:12px;border:1px solid #ddd;background:#fff;border-radius:5px;cursor:pointer}
 #btn-clear{width:100%;margin-top:8px;color:#c33;border-color:#eecccc}
 .zn{display:flex;justify-content:space-between;padding:5px 7px;margin-bottom:3px;border-radius:5px;font-size:12px;cursor:pointer;border:1px solid transparent}
@@ -159,9 +177,12 @@ const ITEMS = [
     ['伸展床', 200, 100], ['拉筋架', 100, 100]
   ]],
   ['隔間與設備', '#888780', [
-    ['隔屏', 200, 10], ['實牆', 300, 15], ['玻璃隔間', 300, 10],
+    ['隔屏', 200, 10], ['玻璃隔間', 300, 10],
     ['門', 90, 10], ['淋浴間', 100, 100], ['廁所', 150, 120],
     ['更衣間', 120, 120], ['鏡牆', 300, 5]
+  ]],
+  ['改牆（加牆/拆牆）', '#8d3b2e', [
+    ['新增牆段', 300, 15, 'wall'], ['拆牆遮罩', 200, 40, 'erase']
   ]]
 ];
 
@@ -203,6 +224,7 @@ const lFill = el('path', { d: PLAN.wallFill, fill: '#c9c7bf', stroke: 'none' }, 
 const lWall = el('path', { d: PLAN.walls, fill: 'none', stroke: '#8d3b2e', 'stroke-width': .9 }, svg);
 const lDetail = el('path', { d: PLAN.detail, fill: 'none', stroke: '#9a9890', 'stroke-width': .4 }, svg);
 const lDims = el('path', { d: PLAN.dims, fill: 'none', stroke: '#cfcdc5', 'stroke-width': .3, display: 'none' }, svg);
+const lErase = el('g', {}, svg);
 const lItem = el('g', {}, svg);
 
 function ping(wcm, hcm) { return (wcm * hcm / PING).toFixed(1); }
@@ -210,6 +232,7 @@ function ping(wcm, hcm) { return (wcm * hcm / PING).toFixed(1); }
 function render() {
   lZone.innerHTML = '';
   lItem.innerHTML = '';
+  lErase.innerHTML = '';
   const showLabel = document.getElementById('ck-label').checked;
 
   state.zones.forEach(z => {
@@ -247,16 +270,33 @@ function render() {
       class: 'item', 'data-id': it.id,
       transform: `translate(${c2u(it.x)} ${c2u(it.y)}) rotate(${it.r})`,
       style: 'cursor:move'
-    }, lItem);
+    }, it.k === 'erase' ? lErase : lItem);
     const w = c2u(it.w), h = c2u(it.h);
-    el('rect', {
-      x: -w / 2, y: -h / 2, width: w, height: h,
-      fill: it.color, 'fill-opacity': sel === it.id ? .55 : .32,
-      stroke: sel === it.id ? '#1c1c1a' : it.color,
-      'stroke-width': sel === it.id ? 1.1 : .7, rx: 1
-    }, g);
-    el('line', { x1: 0, y1: -h / 2, x2: 0, y2: -h / 2 + Math.min(h * .3, 4), stroke: it.color, 'stroke-width': .8 }, g);
-    if (showLabel && w > 8) {
+    if (it.k === 'wall') {
+      el('rect', {
+        x: -w / 2, y: -h / 2, width: w, height: h,
+        fill: '#8d3b2e', 'fill-opacity': .95,
+        stroke: sel === it.id ? '#1c1c1a' : '#6d2d22',
+        'stroke-width': sel === it.id ? 1.1 : .4
+      }, g);
+    } else if (it.k === 'erase') {
+      el('rect', {
+        x: -w / 2, y: -h / 2, width: w, height: h,
+        fill: '#ffffff',
+        stroke: sel === it.id ? '#1c1c1a' : '#e3e1d9',
+        'stroke-width': sel === it.id ? 1.1 : .5,
+        'stroke-dasharray': sel === it.id ? 'none' : '3 2'
+      }, g);
+    } else {
+      el('rect', {
+        x: -w / 2, y: -h / 2, width: w, height: h,
+        fill: it.color, 'fill-opacity': sel === it.id ? .55 : .32,
+        stroke: sel === it.id ? '#1c1c1a' : it.color,
+        'stroke-width': sel === it.id ? 1.1 : .7, rx: 1
+      }, g);
+      el('line', { x1: 0, y1: -h / 2, x2: 0, y2: -h / 2 + Math.min(h * .3, 4), stroke: it.color, 'stroke-width': .8 }, g);
+    }
+    if (showLabel && w > 8 && (!it.k || sel === it.id)) {
       const t = el('text', {
         x: 0, y: 1.6, 'text-anchor': 'middle', 'font-size': Math.min(4.6, w / 5.5),
         fill: '#333', style: 'pointer-events:none;user-select:none'
@@ -286,10 +326,10 @@ function render() {
   save();
 }
 
-function addItem(name, w, h, color) {
+function addItem(name, w, h, color, kind) {
   const vb = svg.viewBox.baseVal;
   const it = {
-    id: state.seq++, name, w, h, r: 0, color,
+    id: state.seq++, name, w, h, r: 0, color, k: kind || '',
     x: u2c(vb.x + vb.width / 2) + (state.items.length % 5) * 20,
     y: u2c(vb.y + vb.height / 2) + (state.items.length % 5) * 20
   };
@@ -458,10 +498,10 @@ document.getElementById('p-dup').onclick = () => { const it = state.items.find(i
 const pi = document.getElementById('pane-items');
 ITEMS.forEach(([cat, color, list]) => {
   const h = document.createElement('div'); h.className = 'cat'; h.textContent = cat; pi.appendChild(h);
-  list.forEach(([n, w, hh]) => {
+  list.forEach(([n, w, hh, kind]) => {
     const d = document.createElement('div'); d.className = 'it';
     d.innerHTML = `<span style="display:flex;align-items:center"><i class="sw" style="background:${color}"></i>${n}</span><small>${w}×${hh}</small>`;
-    d.onclick = () => addItem(n, w, hh, color);
+    d.onclick = () => addItem(n, w, hh, color, kind);
     pi.appendChild(d);
   });
 });
@@ -539,7 +579,8 @@ async function fbConnect(cfgText, room) {
     const a = app.initializeApp(cfg);
     await auth.signInAnonymously(auth.getAuth(a));
     const d = db.getDatabase(a);
-    FB.ref = db.ref(d, 'rooms/' + room);
+    FB.ref = db.ref(d, 'rooms/' + room + '/live');
+    FB.vref = db.ref(d, 'rooms/' + room + '/versions');
     FB.set = db.set;
     db.onValue(FB.ref, snap => {
       const v = snap.val();
@@ -547,6 +588,16 @@ async function fbConnect(cfgText, room) {
       FB.applying = true;
       try { state = JSON.parse(v.state); sel = null; render(); hideProps(); } finally { FB.applying = false; }
       fbStat('已連線 · 房間 ' + room + ' · 剛收到更新', 'on');
+    });
+    db.onValue(FB.vref, snap => {
+      const v = snap.val();
+      if (!v) { if (versions.length) pushVersionsRemote(); return; }
+      if (v.by === FB.me) return;
+      try {
+        versions = JSON.parse(v.data) || [];
+        localStorage.setItem('mch-plan-versions', JSON.stringify(versions));
+        renderVersions();
+      } catch (e) {}
     });
     localStorage.setItem('mch-fb', JSON.stringify({ cfg: cfgText, room }));
     location.hash = 'room=' + encodeURIComponent(room);
@@ -560,15 +611,74 @@ async function fbConnect(cfgText, room) {
 
 function fbDisconnect() {
   FB.ref = null;
+  FB.vref = null;
   clearTimeout(FB.timer);
   localStorage.removeItem('mch-fb');
   fbStat('目前：本機模式（只存在這台電腦）');
+}
+
+let versions = [];
+try { versions = JSON.parse(localStorage.getItem('mch-plan-versions')) || []; } catch (e) {}
+
+function pushVersionsRemote() {
+  if (!FB.vref || !FB.set) return;
+  FB.set(FB.vref, { by: FB.me, ts: Date.now(), data: JSON.stringify(versions) }).catch(() => {});
+}
+
+function persistVersions() {
+  localStorage.setItem('mch-plan-versions', JSON.stringify(versions));
+  pushVersionsRemote();
+  renderVersions();
+}
+
+function renderVersions() {
+  const box = document.getElementById('sv-list');
+  if (!versions.length) { box.innerHTML = '<p class="hint">還沒有存過版本。</p>'; return; }
+  box.innerHTML = '';
+  [...versions].sort((a, b) => b.ts - a.ts).forEach(v => {
+    const row = document.createElement('div'); row.className = 'sv';
+    const dt = new Date(v.ts);
+    const pad = n => String(n).padStart(2, '0');
+    const nm = document.createElement('div'); nm.className = 'nm';
+    nm.innerHTML = `<b></b><small>${dt.getMonth() + 1}/${dt.getDate()} ${pad(dt.getHours())}:${pad(dt.getMinutes())} · ${v.n}物件</small>`;
+    nm.querySelector('b').textContent = v.name;
+    const bl = document.createElement('button'); bl.textContent = '載入';
+    bl.onclick = () => {
+      if (!confirm('載入「' + v.name + '」？目前畫面會被覆蓋（建議先另存一版）')) return;
+      state = JSON.parse(v.state); sel = null; render(); hideProps();
+    };
+    const br = document.createElement('button'); br.textContent = '✕'; br.className = 'rm';
+    br.onclick = () => {
+      if (!confirm('刪除版本「' + v.name + '」？')) return;
+      versions = versions.filter(x => x.id !== v.id);
+      persistVersions();
+    };
+    row.append(nm, bl, br);
+    box.appendChild(row);
+  });
+}
+
+function saveVersion() {
+  const inp = document.getElementById('sv-name');
+  const name = inp.value.trim() || ('版本 ' + (versions.length + 1));
+  versions.push({
+    id: Date.now() + '-' + FB.me,
+    name, ts: Date.now(),
+    n: state.items.length,
+    state: JSON.stringify(state)
+  });
+  inp.value = '';
+  persistVersions();
 }
 
 function save() {
   try { localStorage.setItem('mch-plan', JSON.stringify(state)); } catch (e) {}
   pushRemote();
 }
+document.getElementById('sv-add').onclick = saveVersion;
+document.getElementById('sv-name').addEventListener('keydown', e => { if (e.key === 'Enter') saveVersion(); });
+renderVersions();
+
 document.getElementById('fb-go').onclick = () =>
   fbConnect(document.getElementById('fb-cfg').value, document.getElementById('fb-room').value.trim());
 document.getElementById('fb-off').onclick = fbDisconnect;
