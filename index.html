@@ -140,6 +140,8 @@ label.stack input,label.stack textarea{width:100%;margin-top:3px;padding:5px 6px
 .sv .nm small{color:#aaa;font-size:10px}
 .sv button{padding:3px 8px;font-size:11px;border:1px solid #ddd;background:#fff;border-radius:4px;cursor:pointer}
 .sv .rm{color:#c33;border-color:#eecccc}
+.wbtn{width:100%;padding:6px;font-size:12px;border:1px solid #ddd;background:#fff;border-radius:5px;cursor:pointer;margin-bottom:4px}
+.wbtn.won{background:#534AB7;color:#fff;border-color:#534AB7}
 .row button,#btn-clear{flex:1;padding:6px;font-size:12px;border:1px solid #ddd;background:#fff;border-radius:5px;cursor:pointer}
 #btn-clear{width:100%;margin-top:8px;color:#c33;border-color:#eecccc}
 .zn{display:flex;justify-content:space-between;padding:5px 7px;margin-bottom:3px;border-radius:5px;font-size:12px;cursor:pointer;border:1px solid transparent}
@@ -220,16 +222,63 @@ el('path', { d: `M ${c2u(100)} 0 L 0 0 0 ${c2u(100)}`, fill: 'none', stroke: '#e
 
 const lGrid = el('rect', { x: VB[0], y: VB[1], width: VB[2], height: VB[3], fill: 'url(#grid)' }, svg);
 const lZone = el('g', {}, svg);
-const lFill = el('path', { d: PLAN.wallFill, fill: '#c9c7bf', stroke: 'none' }, svg);
-const lWall = el('path', { d: PLAN.walls, fill: 'none', stroke: '#8d3b2e', 'stroke-width': .9 }, svg);
-const lDetail = el('path', { d: PLAN.detail, fill: 'none', stroke: '#9a9890', 'stroke-width': .4 }, svg);
+const SUB = {
+  f: PLAN.wallFill.match(/M[^M]+/g) || [],
+  w: PLAN.walls.match(/M[^M]+/g) || [],
+  d: PLAN.detail.match(/M[^M]+/g) || []
+};
+const gFill = el('g', {}, svg);
+const gWall = el('g', {}, svg);
+const gDetail = el('g', {}, svg);
 const lDims = el('path', { d: PLAN.dims, fill: 'none', stroke: '#cfcdc5', 'stroke-width': .3, display: 'none' }, svg);
 const lErase = el('g', {}, svg);
 const lItem = el('g', {}, svg);
 
+let wallEditMode = false, wallSel = null, baseSig = '';
+const LAYER_STYLE = {
+  f: p => ({ d: p, fill: '#c9c7bf', stroke: 'none' }),
+  w: p => ({ d: p, fill: 'none', stroke: '#8d3b2e', 'stroke-width': .9 }),
+  d: p => ({ d: p, fill: 'none', stroke: '#9a9890', 'stroke-width': .4 })
+};
+function ensureWallEdit() {
+  if (!state.wallEdit) state.wallEdit = { hidden: [], off: {} };
+  if (!state.wallEdit.off) state.wallEdit.off = {};
+  return state.wallEdit;
+}
+function renderBase(force) {
+  const we = ensureWallEdit();
+  const sig = JSON.stringify(we) + '|' + wallEditMode + '|' + wallSel;
+  if (!force && sig === baseSig) return;
+  baseSig = sig;
+  [['f', gFill], ['w', gWall], ['d', gDetail]].forEach(([k, g]) => {
+    g.innerHTML = '';
+    SUB[k].forEach((p, i) => {
+      const key = k + i;
+      if (we.hidden.includes(key)) return;
+      const o = we.off[key];
+      const at = LAYER_STYLE[k](p);
+      if (o) at.transform = `translate(${c2u(o[0])} ${c2u(o[1])})`;
+      if (wallSel === key) {
+        if (k === 'f') at.fill = '#7f77dd';
+        else { at.stroke = '#534AB7'; at['stroke-width'] = 1.8; }
+      }
+      at.class = 'bw';
+      at['data-key'] = key;
+      if (!wallEditMode) at.style = 'pointer-events:none';
+      el('path', at, g);
+      if (wallEditMode && k !== 'f') {
+        const hit = { d: p, fill: 'none', stroke: '#000', 'stroke-opacity': 0, 'stroke-width': 4.5, class: 'bw', 'data-key': key, style: 'pointer-events:stroke;cursor:pointer' };
+        if (o) hit.transform = `translate(${c2u(o[0])} ${c2u(o[1])})`;
+        el('path', hit, g);
+      }
+    });
+  });
+}
+
 function ping(wcm, hcm) { return (wcm * hcm / PING).toFixed(1); }
 
 function render() {
+  renderBase();
   lZone.innerHTML = '';
   lItem.innerHTML = '';
   lErase.innerHTML = '';
@@ -374,10 +423,21 @@ svg.addEventListener('pointerdown', e => {
   }
   const rh = e.target.closest('.rh');
   const rot = e.target.closest('.rot');
+  const bw = wallEditMode ? e.target.closest('.bw') : null;
   const zh = e.target.closest('.zh');
   const zg = e.target.closest('.zone');
   const ig = e.target.closest('.item');
   const p = pt(e);
+  if (bw && !rh && !rot) {
+    wallSel = bw.dataset.key;
+    const we = ensureWallEdit();
+    const o = we.off[wallSel] || [0, 0];
+    drag = { t: 'bw', key: wallSel, ox: o[0], oy: o[1], px: p.x, py: p.y };
+    renderBase();
+    svg.setPointerCapture(e.pointerId);
+    svg.classList.add('drag');
+    return;
+  }
   if (rh) {
     const it = state.items.find(v => v.id === +rh.dataset.id);
     drag = { t: 'ir', it };
@@ -395,7 +455,9 @@ svg.addEventListener('pointerdown', e => {
     const z = state.zones.find(v => v.id === zg.dataset.id);
     drag = { t: 'z', z, dx: p.x - z.x, dy: p.y - z.y };
   } else {
-    sel = null; drag = { t: 'pan', sx: e.clientX, sy: e.clientY, vb: svg.getAttribute('viewBox').split(' ').map(Number) };
+    sel = null;
+    if (wallSel) { wallSel = null; renderBase(); }
+    drag = { t: 'pan', sx: e.clientX, sy: e.clientY, vb: svg.getAttribute('viewBox').split(' ').map(Number) };
     render(); hideProps();
   }
   svg.setPointerCapture(e.pointerId);
@@ -413,6 +475,12 @@ svg.addEventListener('pointermove', e => {
     return;
   }
   const p = pt(e);
+  if (drag.t === 'bw') {
+    const we = ensureWallEdit();
+    we.off[drag.key] = [sn(drag.ox + p.x - drag.px), sn(drag.oy + p.y - drag.py)];
+    renderBase();
+    return;
+  }
   if (drag.t === 'i') { drag.it.x = sn(p.x - drag.dx); drag.it.y = sn(p.y - drag.dy); }
   if (drag.t === 'z') { drag.z.x = sn(p.x - drag.dx); drag.z.y = sn(p.y - drag.dy); }
   if (drag.t === 'zr') { drag.z.w = Math.max(50, sn(p.x - drag.z.x)); drag.z.h = Math.max(50, sn(p.y - drag.z.y)); }
@@ -435,7 +503,7 @@ svg.addEventListener('pointermove', e => {
   if (['i', 'ir', 'irot'].includes(drag.t)) showProps();
 });
 
-const endDrag = () => { drag = null; svg.classList.remove('drag'); };
+const endDrag = () => { if (drag && drag.t === 'bw') save(); drag = null; svg.classList.remove('drag'); };
 svg.addEventListener('pointerup', endDrag);
 svg.addEventListener('pointercancel', endDrag);
 
@@ -451,8 +519,21 @@ svg.addEventListener('wheel', e => {
   svg.setAttribute('viewBox', [mx - (mx - vb[0]) * (nw / vb[2]), my - (my - vb[1]) * (nh / vb[3]), nw, nh].join(' '));
 }, { passive: false });
 
+function deleteWallSel() {
+  if (!wallSel) return;
+  const we = ensureWallEdit();
+  if (!we.hidden.includes(wallSel)) we.hidden.push(wallSel);
+  wallSel = null;
+  renderBase();
+  save();
+}
+
 document.addEventListener('keydown', e => {
-  if (!sel || ['INPUT'].includes(e.target.tagName)) return;
+  if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+  if (wallEditMode && wallSel && (e.key === 'Delete' || e.key === 'Backspace')) {
+    e.preventDefault(); deleteWallSel(); return;
+  }
+  if (!sel) return;
   const it = state.items.find(i => i.id === sel);
   if (!it) return;
   if (e.key === 'r' || e.key === 'R') { it.r = (it.r + 15) % 360; render(); showProps(); }
@@ -506,6 +587,30 @@ ITEMS.forEach(([cat, color, list]) => {
   });
 });
 
+const wc = document.createElement('div');
+wc.innerHTML = '<div class="cat">原始牆編輯（改原圖本身）</div>' +
+  '<button id="bw-toggle" class="wbtn">編輯原始牆：關</button>' +
+  '<button id="bw-del" class="wbtn">刪除選取的牆段</button>' +
+  '<button id="bw-reset" class="wbtn">復原所有原始牆</button>' +
+  '<p class="hint">開啟後，點原圖的牆線、樓梯、灰色牆體會變紫色＝選取；拖曳可移動、按 Delete 或上面按鈕刪除。改動會存進版本並同步給共編的人。</p>';
+pi.appendChild(wc);
+
+document.getElementById('bw-toggle').onclick = e => {
+  wallEditMode = !wallEditMode;
+  wallSel = null;
+  e.target.textContent = '編輯原始牆：' + (wallEditMode ? '開' : '關');
+  e.target.classList.toggle('won', wallEditMode);
+  renderBase(true);
+};
+document.getElementById('bw-del').onclick = deleteWallSel;
+document.getElementById('bw-reset').onclick = () => {
+  if (!confirm('把刪除或移動過的原始牆全部復原？')) return;
+  state.wallEdit = { hidden: [], off: {} };
+  wallSel = null;
+  renderBase();
+  save();
+};
+
 const zl = document.getElementById('zonelist');
 ZONES.forEach(([n, f, s]) => {
   const d = document.createElement('div'); d.className = 'zn';
@@ -523,7 +628,7 @@ document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
 });
 
 document.getElementById('ck-dims').onchange = e => lDims.setAttribute('display', e.target.checked ? 'inline' : 'none');
-document.getElementById('ck-detail').onchange = e => lDetail.setAttribute('display', e.target.checked ? 'inline' : 'none');
+document.getElementById('ck-detail').onchange = e => gDetail.setAttribute('display', e.target.checked ? 'inline' : 'none');
 document.getElementById('ck-grid').onchange = e => lGrid.setAttribute('display', e.target.checked ? 'inline' : 'none');
 document.getElementById('ck-label').onchange = render;
 
