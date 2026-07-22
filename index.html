@@ -10,7 +10,7 @@
 <div id="app">
   <aside id="side">
     <h1>美金豪 2F 空間規劃</h1>
-    <p class="hint">點左側物件加入平面圖，拖曳移動。選取後拖四角改大小、拖上方圓點旋轉，或在右上面板輸入精確數字。</p>
+    <p class="hint">按「＋」把物件加入平面圖，拖曳移動。點名稱、尺寸、色點可直接改；「✕」刪除。選取後拖四角改大小、拖上方圓點旋轉。</p>
 
     <div class="grp">
       <button class="tab on" data-tab="items">物件</button>
@@ -169,6 +169,8 @@ label.stack input,label.stack textarea{width:100%;margin-top:3px;padding:5px 6px
 .zn-name:hover,.zn-name:focus{border-color:#ddd;background:#fff;outline:none}
 .zn-add,.zn-del{flex:none;width:20px;height:20px;line-height:18px;text-align:center;padding:0;font-size:12px;border:1px solid #ddd;background:#fff;border-radius:4px;cursor:pointer}
 .zn-del{color:#c33;border-color:#eecccc}
+.it-size{flex:none;width:52px;font-size:11px;color:#888;padding:3px 4px;border:1px solid transparent;border-radius:4px;background:transparent;text-align:right}
+.it-size:hover,.it-size:focus{border-color:#ddd;background:#fff;color:#1c1c1a;outline:none}
 @media print{#side,#topbar,#props{display:none}#app{border:0;height:auto}}
 </style>
 
@@ -179,7 +181,7 @@ const c2u = v => v / CM;
 const u2c = v => v * CM;
 const PING = 33057.9;
 
-const ITEMS = [
+const ITEMS_DEFAULT = [
   ['接待與辦公', '#7F77DD', [
     ['直線櫃台', 240, 60], ['L型櫃台', 240, 180], ['辦公桌', 140, 70],
     ['會議桌', 180, 90], ['沙發', 200, 85], ['等候椅', 120, 55],
@@ -205,7 +207,9 @@ const ITEMS = [
     ['隔屏', 200, 10], ['玻璃隔間', 300, 10],
     ['門', 90, 10], ['淋浴間', 100, 100], ['廁所', 150, 120],
     ['更衣間', 120, 120], ['鏡牆', 300, 5]
-  ]],
+  ]]
+];
+const ITEMS_FIXED = [
   ['改牆（加牆/拆牆）', '#8d3b2e', [
     ['新增牆段', 300, 15, 'wall'], ['拆牆遮罩', 200, 40, 'erase']
   ]],
@@ -213,6 +217,10 @@ const ITEMS = [
     ['距離尺', 300, 20, 'ruler'], ['面積框（可拉多邊形）', 400, 300, 'areaZ']
   ]]
 ];
+let ITEMS = [];
+try { ITEMS = JSON.parse(localStorage.getItem('mch-plan-itemkinds')); } catch (e) {}
+if (!Array.isArray(ITEMS) || !ITEMS.length) ITEMS = JSON.parse(JSON.stringify(ITEMS_DEFAULT));
+function saveItemKinds() { localStorage.setItem('mch-plan-itemkinds', JSON.stringify(ITEMS)); }
 
 function addMeasZone() {
   const vb = svg.viewBox.baseVal;
@@ -734,15 +742,61 @@ document.getElementById('p-rot').onclick = () => { const it = state.items.find(i
 document.getElementById('p-dup').onclick = () => { const it = state.items.find(i => i.id === sel); const n = { ...it, id: state.seq++, x: it.x + 30, y: it.y + 30 }; state.items.push(n); sel = n.id; render(); showProps(); };
 
 const pi = document.getElementById('pane-items');
-ITEMS.forEach(([cat, color, list]) => {
-  const h = document.createElement('div'); h.className = 'cat'; h.textContent = cat; pi.appendChild(h);
-  list.forEach(([n, w, hh, kind]) => {
-    const d = document.createElement('div'); d.className = 'it';
-    d.innerHTML = `<span style="display:flex;align-items:center"><i class="sw" style="background:${color}"></i>${n}</span><small>${w}×${hh}</small>`;
-    d.onclick = () => kind === 'areaZ' ? addMeasZone() : addItem(n, w, hh, color, kind);
-    pi.appendChild(d);
+const catBox = document.createElement('div');
+pi.appendChild(catBox);
+function renderItemCatalog() {
+  catBox.innerHTML = '';
+  ITEMS.forEach((cat, ci) => {
+    const h = document.createElement('div'); h.className = 'zn-row';
+    h.style.background = cat[1] + '22';
+    h.innerHTML = `<input type="color" class="zn-color" value="${cat[1]}">` +
+      `<input type="text" class="zn-name" style="font-weight:600" value="${cat[0]}">` +
+      `<button class="zn-add" title="新增物件到這個分類">＋</button>` +
+      `<button class="zn-del" title="刪除分類">✕</button>`;
+    h.querySelector('.zn-color').onchange = e => { cat[1] = e.target.value; saveItemKinds(); renderItemCatalog(); };
+    h.querySelector('.zn-name').addEventListener('input', e => { cat[0] = e.target.value; saveItemKinds(); });
+    h.querySelector('.zn-add').onclick = () => { cat[2].push(['新物件', 100, 100]); saveItemKinds(); renderItemCatalog(); };
+    h.querySelector('.zn-del').onclick = () => {
+      if (!confirm('刪除分類「' + cat[0] + '」與裡面全部物件？（已放到圖上的不受影響）')) return;
+      ITEMS.splice(ci, 1); saveItemKinds(); renderItemCatalog();
+    };
+    catBox.appendChild(h);
+    cat[2].forEach((item, ii) => {
+      const d = document.createElement('div'); d.className = 'zn-row';
+      d.innerHTML = `<i class="sw" style="background:${cat[1]}"></i>` +
+        `<input type="text" class="zn-name" value="${item[0]}">` +
+        `<input type="text" class="it-size" value="${item[1]}×${item[2]}">` +
+        `<button class="zn-add" title="加入平面圖">＋</button>` +
+        `<button class="zn-del" title="刪除物件">✕</button>`;
+      d.querySelector('.zn-name').addEventListener('input', e => { item[0] = e.target.value; saveItemKinds(); });
+      d.querySelector('.it-size').onchange = e => {
+        const m = e.target.value.match(/(\d+)\s*[x×X*]\s*(\d+)/);
+        if (m) { item[1] = +m[1]; item[2] = +m[2]; saveItemKinds(); }
+        e.target.value = item[1] + '×' + item[2];
+      };
+      d.querySelector('.zn-add').onclick = () => addItem(item[0], item[1], item[2], cat[1], '');
+      d.querySelector('.zn-del').onclick = () => {
+        if (!confirm('刪除物件「' + item[0] + '」？')) return;
+        cat[2].splice(ii, 1); saveItemKinds(); renderItemCatalog();
+      };
+      catBox.appendChild(d);
+    });
   });
-});
+  const nb = document.createElement('button');
+  nb.className = 'wsel'; nb.style.cursor = 'pointer'; nb.textContent = '＋ 新增分類';
+  nb.onclick = () => { ITEMS.push(['新分類', '#7F77DD', []]); saveItemKinds(); renderItemCatalog(); };
+  catBox.appendChild(nb);
+  ITEMS_FIXED.forEach(([cat, color, list]) => {
+    const h = document.createElement('div'); h.className = 'cat'; h.textContent = cat; catBox.appendChild(h);
+    list.forEach(([n, w, hh, kind]) => {
+      const d = document.createElement('div'); d.className = 'it';
+      d.innerHTML = `<span style="display:flex;align-items:center"><i class="sw" style="background:${color}"></i>${n}</span><small>${w}×${hh}</small>`;
+      d.onclick = () => kind === 'areaZ' ? addMeasZone() : addItem(n, w, hh, color, kind);
+      catBox.appendChild(d);
+    });
+  });
+}
+renderItemCatalog();
 
 const wc = document.createElement('div');
 wc.innerHTML = '<div class="cat">底圖（場地）</div>' +
