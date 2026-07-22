@@ -23,8 +23,9 @@
     <div class="pane" id="pane-items"></div>
 
     <div class="pane hide" id="pane-zones">
-      <p class="hint">點一下加入區域色塊，可拖曳與縮放，自動算坪數。</p>
+      <p class="hint">點色塊加入平面圖，可拖曳與縮放，自動算坪數。點左邊圓點改顏色、點名稱可改名、✕ 刪除分類。</p>
       <div id="zonelist"></div>
+      <button id="zn-new" class="wsel" style="cursor:pointer;margin-top:4px">＋ 新增分類</button>
     </div>
 
     <div class="pane hide" id="pane-view">
@@ -162,6 +163,12 @@ label.stack input,label.stack textarea{width:100%;margin-top:3px;padding:5px 6px
 #btn-clear{width:100%;margin-top:8px;color:#c33;border-color:#eecccc}
 .zn{display:flex;justify-content:space-between;padding:5px 7px;margin-bottom:3px;border-radius:5px;font-size:12px;cursor:pointer;border:1px solid transparent}
 .zn:hover{filter:brightness(.96)}
+.zn-row{display:flex;align-items:center;gap:5px;padding:4px 6px;margin-bottom:3px;border-radius:5px;font-size:12px}
+.zn-color{width:18px;height:18px;padding:0;border:1px solid rgba(0,0,0,.15);border-radius:4px;background:none;cursor:pointer;flex:none}
+.zn-name{flex:1;min-width:0;font-size:12px;padding:3px 5px;border:1px solid transparent;border-radius:4px;background:transparent}
+.zn-name:hover,.zn-name:focus{border-color:#ddd;background:#fff;outline:none}
+.zn-add,.zn-del{flex:none;width:20px;height:20px;line-height:18px;text-align:center;padding:0;font-size:12px;border:1px solid #ddd;background:#fff;border-radius:4px;cursor:pointer}
+.zn-del{color:#c33;border-color:#eecccc}
 @media print{#side,#topbar,#props{display:none}#app{border:0;height:auto}}
 </style>
 
@@ -220,7 +227,7 @@ function addMeasZone() {
   render(); showZProps();
 }
 
-const ZONES = [
+const ZONES_DEFAULT = [
   ['自主訓練區', '#9FE1CB', '#085041'],
   ['私人教練區', '#C0DD97', '#27500A'],
   ['團體重訓區', '#5DCAA5', '#04342C'],
@@ -232,6 +239,17 @@ const ZONES = [
   ['庫房後勤', '#F5C4B3', '#712B13'],
   ['風險區（外推）', '#F7C1C1', '#791F1F']
 ];
+let ZONES = [];
+try { ZONES = JSON.parse(localStorage.getItem('mch-plan-zonekinds')); } catch (e) {}
+if (!Array.isArray(ZONES) || !ZONES.length) ZONES = ZONES_DEFAULT.map(z => z.slice());
+function saveZoneKinds() { localStorage.setItem('mch-plan-zonekinds', JSON.stringify(ZONES)); }
+function darkenHex(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = Math.round(((n >> 16) & 255) * .4);
+  const g = Math.round(((n >> 8) & 255) * .4);
+  const b = Math.round((n & 255) * .4);
+  return '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
+}
 
 const svg = document.getElementById('svg');
 const NS = 'http://www.w3.org/2000/svg';
@@ -679,18 +697,22 @@ document.getElementById('z-name').addEventListener('input', e => {
   render();
 });
 document.getElementById('z-del').onclick = delZone;
-const zcBox = document.getElementById('z-colors');
-ZONES.forEach(([n, f, s]) => {
-  const b = document.createElement('i');
-  b.className = 'zsw'; b.dataset.fill = f;
-  b.style.background = f; b.title = n;
-  b.onclick = () => {
-    const z = state.zones.find(v => v.id === zoneSel); if (!z) return;
-    z.fill = f; z.stroke = s;
-    render(); showZProps();
-  };
-  zcBox.appendChild(b);
-});
+function renderZColorPalette() {
+  const zcBox = document.getElementById('z-colors');
+  zcBox.innerHTML = '';
+  ZONES.forEach(([n, f, s]) => {
+    const b = document.createElement('i');
+    b.className = 'zsw'; b.dataset.fill = f;
+    b.style.background = f; b.title = n;
+    b.onclick = () => {
+      const z = state.zones.find(v => v.id === zoneSel); if (!z) return;
+      z.fill = f; z.stroke = s;
+      render(); showZProps();
+    };
+    zcBox.appendChild(b);
+  });
+}
+renderZColorPalette();
 document.getElementById('p-del').onclick = delItem;
 document.getElementById('p-top').onclick = () => {
   const i = state.items.findIndex(v => v.id === sel); if (i < 0) return;
@@ -738,14 +760,36 @@ ob.value = 'blank'; ob.textContent = '空白（無底圖）';
 fsel.appendChild(ob);
 fsel.onchange = () => { state.floor = fsel.value; render(); };
 
-const zl = document.getElementById('zonelist');
-ZONES.forEach(([n, f, s]) => {
-  const d = document.createElement('div'); d.className = 'zn';
-  d.style.background = f; d.style.color = s;
-  d.innerHTML = `<span>${n}</span><span>＋</span>`;
-  d.onclick = () => addZone(n, f, s);
-  zl.appendChild(d);
-});
+function renderZoneKinds() {
+  const zl = document.getElementById('zonelist');
+  zl.innerHTML = '';
+  ZONES.forEach((z, idx) => {
+    const d = document.createElement('div'); d.className = 'zn-row';
+    d.style.background = z[1] + '33';
+    d.innerHTML = `<input type="color" class="zn-color" value="${z[1]}">` +
+      `<input type="text" class="zn-name" value="${z[0]}">` +
+      `<button class="zn-add" title="加入平面圖">＋</button>` +
+      `<button class="zn-del" title="刪除分類">✕</button>`;
+    d.querySelector('.zn-color').onchange = e => {
+      ZONES[idx][1] = e.target.value;
+      ZONES[idx][2] = darkenHex(e.target.value);
+      saveZoneKinds(); renderZoneKinds(); renderZColorPalette();
+    };
+    d.querySelector('.zn-name').addEventListener('input', e => { ZONES[idx][0] = e.target.value; saveZoneKinds(); });
+    d.querySelector('.zn-add').onclick = () => addZone(ZONES[idx][0], ZONES[idx][1], ZONES[idx][2]);
+    d.querySelector('.zn-del').onclick = () => {
+      if (!confirm('刪除分類「' + ZONES[idx][0] + '」？（已放到圖上的區域不受影響）')) return;
+      ZONES.splice(idx, 1);
+      saveZoneKinds(); renderZoneKinds(); renderZColorPalette();
+    };
+    zl.appendChild(d);
+  });
+}
+renderZoneKinds();
+document.getElementById('zn-new').onclick = () => {
+  ZONES.push(['新分類', '#D8D5C8', '#3A382E']);
+  saveZoneKinds(); renderZoneKinds(); renderZColorPalette();
+};
 
 document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
   document.querySelectorAll('.tab').forEach(x => x.classList.remove('on'));
