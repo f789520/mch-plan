@@ -1053,28 +1053,47 @@ function renderVersions() {
       if (!confirm('載入「' + v.name + '」？目前畫面會被覆蓋（建議先另存一版）')) return;
       state = JSON.parse(v.state); sel = null; render(); hideProps();
     };
+    const bo = document.createElement('button'); bo.textContent = '覆蓋';
+    bo.title = '把目前畫面存進這個版本';
+    bo.onclick = () => {
+      if (!confirm('用目前畫面覆蓋版本「' + v.name + '」？原內容會不見')) return;
+      overwriteVersion(v);
+    };
     const br = document.createElement('button'); br.textContent = '✕'; br.className = 'rm';
     br.onclick = () => {
       if (!confirm('刪除版本「' + v.name + '」？')) return;
       versions = versions.filter(x => x.id !== v.id);
       persistVersions();
     };
-    row.append(nm, bl, br);
+    row.append(nm, bl, bo, br);
     box.appendChild(row);
   });
+}
+
+function overwriteVersion(v) {
+  v.ts = Date.now();
+  v.n = state.items.length;
+  v.state = JSON.stringify(state);
+  persistVersions();
 }
 
 function saveVersion() {
   const inp = document.getElementById('sv-name');
   const name = inp.value.trim() || ('版本 ' + (versions.length + 1));
-  versions.push({
-    id: Date.now() + '-' + FB.me,
-    name, ts: Date.now(),
-    n: state.items.length,
-    state: JSON.stringify(state)
-  });
+  const dup = versions.find(v => v.name === name);
+  if (dup) {
+    if (!confirm('已有版本「' + name + '」，用目前畫面覆蓋它？')) return;
+    overwriteVersion(dup);
+  } else {
+    versions.push({
+      id: Date.now() + '-' + FB.me,
+      name, ts: Date.now(),
+      n: state.items.length,
+      state: JSON.stringify(state)
+    });
+    persistVersions();
+  }
   inp.value = '';
-  persistVersions();
 }
 
 function save() {
