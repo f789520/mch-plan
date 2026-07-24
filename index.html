@@ -80,6 +80,8 @@
       <span class="sep"></span>
       <span id="sel">未選取</span>
       <span class="sep"></span>
+      <button id="btn-undo" class="tbtn" title="復原 (Ctrl+Z)" disabled>⟲ 復原</button>
+      <button id="btn-redo" class="tbtn" title="重做 (Ctrl+Y)" disabled>⟳</button>
       <span class="muted">1單位=4.955cm</span>
     </div>
     <svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg>
@@ -122,6 +124,8 @@
 #stage{flex:1;position:relative;background:#fff;overflow:hidden}
 #topbar{position:absolute;top:0;left:0;right:0;height:34px;display:flex;align-items:center;gap:10px;padding:0 12px;font-size:12px;color:#555;background:rgba(255,255,255,.94);border-bottom:1px solid #eee;z-index:2}
 .sep{width:1px;height:14px;background:#ddd}
+.tbtn{padding:2px 8px;font-size:12px;border:1px solid #ddd;background:#fff;border-radius:5px;cursor:pointer}
+.tbtn:disabled{opacity:.35;cursor:default}
 .muted{color:#aaa;margin-left:auto}
 #svg{width:100%;height:100%;touch-action:none;cursor:grab}
 #svg.drag{cursor:grabbing}
@@ -280,6 +284,7 @@ const GLYPHS = {
 };
 
 function addMeasZone() {
+  snap();
   const vb = svg.viewBox.baseVal;
   const x = u2c(vb.x + vb.width / 2) - 200, y = u2c(vb.y + vb.height / 2) - 150;
   const z = {
@@ -323,6 +328,37 @@ svg.setAttribute('viewBox', VB.join(' '));
 
 let state = { items: [], zones: [], seq: 1 };
 let sel = null;
+
+let hist = [], redoStack = [], histT = 0;
+function snap(coalesce) {
+  const s = JSON.stringify(state);
+  if (hist.length && hist[hist.length - 1] === s) return;
+  const now = Date.now();
+  if (coalesce && now - histT < 1000) return;
+  histT = now;
+  hist.push(s);
+  if (hist.length > 60) hist.shift();
+  redoStack = [];
+  updateUndoBtns();
+}
+function undo() {
+  const cur = JSON.stringify(state);
+  while (hist.length && hist[hist.length - 1] === cur) hist.pop();
+  if (!hist.length) return;
+  redoStack.push(cur);
+  state = JSON.parse(hist.pop());
+  sel = null; zoneSel = null; render(); hideProps(); hideZProps(); updateUndoBtns();
+}
+function redo() {
+  if (!redoStack.length) return;
+  hist.push(JSON.stringify(state));
+  state = JSON.parse(redoStack.pop());
+  sel = null; zoneSel = null; render(); hideProps(); hideZProps(); updateUndoBtns();
+}
+function updateUndoBtns() {
+  const u = document.getElementById('btn-undo'), r = document.getElementById('btn-redo');
+  if (u) { u.disabled = !hist.length; r.disabled = !redoStack.length; }
+}
 
 function el(tag, attrs, parent) {
   const n = document.createElementNS(NS, tag);
@@ -543,6 +579,7 @@ function render() {
 }
 
 function addItem(name, w, h, color, kind) {
+  snap();
   const vb = svg.viewBox.baseVal;
   const it = {
     id: state.seq++, name, w, h, r: 0, color, k: kind || '',
@@ -555,6 +592,7 @@ function addItem(name, w, h, color, kind) {
 }
 
 function addZone(name, fill, stroke) {
+  snap();
   const vb = svg.viewBox.baseVal;
   const x = u2c(vb.x + 60), y = u2c(vb.y + 60);
   const z = {
@@ -590,6 +628,7 @@ svg.addEventListener('dblclick', e => {
 svg.addEventListener('pointerdown', e => {
   const zx = e.target.closest('.zx');
   if (zx) {
+    snap();
     state.zones = state.zones.filter(v => v.id !== zx.dataset.id);
     if (zoneSel === zx.dataset.id) { zoneSel = null; hideZProps(); }
     render();
@@ -602,6 +641,7 @@ svg.addEventListener('pointerdown', e => {
   const zg = e.target.closest('.zone');
   const ig = e.target.closest('.item');
   const p = pt(e);
+  if (zv || zm || rh || rot || ig || zg) snap();
   if (zv || zm) {
     const z = state.zones.find(v => v.id === (zv || zm).dataset.id);
     const pts = zonePts(z);
@@ -700,15 +740,18 @@ svg.addEventListener('wheel', e => {
 
 document.addEventListener('keydown', e => {
   if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); undo(); return; }
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y' || (e.shiftKey && (e.key === 'z' || e.key === 'Z')))) { e.preventDefault(); redo(); return; }
   if (!sel && zoneSel && (e.key === 'Delete' || e.key === 'Backspace')) {
     e.preventDefault(); delZone(); return;
   }
   if (!sel) return;
   const it = state.items.find(i => i.id === sel);
   if (!it) return;
-  if (e.key === 'r' || e.key === 'R') { it.r = (it.r + 15) % 360; render(); showProps(); }
+  if (e.key === 'r' || e.key === 'R') { snap(); it.r = (it.r + 15) % 360; render(); showProps(); }
   if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); delItem(); }
   const step = e.shiftKey ? 1 : 10;
+  if (e.key.startsWith('Arrow')) snap(true);
   if (e.key === 'ArrowLeft') { it.x -= step; render(); }
   if (e.key === 'ArrowRight') { it.x += step; render(); }
   if (e.key === 'ArrowUp') { it.y -= step; render(); }
@@ -740,10 +783,11 @@ function showZProps() {
 }
 function hideZProps() { document.getElementById('zprops').classList.add('hide'); }
 function delZone() {
+  snap();
   state.zones = state.zones.filter(v => v.id !== zoneSel);
   zoneSel = null; render(); hideZProps();
 }
-function delItem() { state.items = state.items.filter(i => i.id !== sel); sel = null; render(); hideProps(); }
+function delItem() { snap(); state.items = state.items.filter(i => i.id !== sel); sel = null; render(); hideProps(); }
 
 ['p-w', 'p-h', 'p-r'].forEach(id => {
   document.getElementById(id).addEventListener('input', e => {
@@ -773,6 +817,7 @@ function renderZColorPalette() {
     b.style.background = f; b.title = n;
     b.onclick = () => {
       const z = state.zones.find(v => v.id === zoneSel); if (!z) return;
+      snap();
       z.fill = f; z.stroke = s;
       render(); showZProps();
     };
@@ -783,22 +828,25 @@ renderZColorPalette();
 document.getElementById('p-del').onclick = delItem;
 document.getElementById('p-top').onclick = () => {
   const i = state.items.findIndex(v => v.id === sel); if (i < 0) return;
-  const [it] = state.items.splice(i, 1); state.items.push(it); render();
+  snap(); const [it] = state.items.splice(i, 1); state.items.push(it); render();
 };
 document.getElementById('p-bot').onclick = () => {
   const i = state.items.findIndex(v => v.id === sel); if (i < 0) return;
-  const [it] = state.items.splice(i, 1); state.items.unshift(it); render();
+  snap(); const [it] = state.items.splice(i, 1); state.items.unshift(it); render();
 };
 document.getElementById('z-top').onclick = () => {
   const i = state.zones.findIndex(v => v.id === zoneSel); if (i < 0) return;
-  const [z] = state.zones.splice(i, 1); state.zones.push(z); render();
+  snap(); const [z] = state.zones.splice(i, 1); state.zones.push(z); render();
 };
 document.getElementById('z-bot').onclick = () => {
   const i = state.zones.findIndex(v => v.id === zoneSel); if (i < 0) return;
-  const [z] = state.zones.splice(i, 1); state.zones.unshift(z); render();
+  snap(); const [z] = state.zones.splice(i, 1); state.zones.unshift(z); render();
 };
-document.getElementById('p-rot').onclick = () => { const it = state.items.find(i => i.id === sel); it.r = (it.r + 90) % 360; render(); showProps(); };
-document.getElementById('p-dup').onclick = () => { const it = state.items.find(i => i.id === sel); const n = { ...it, id: state.seq++, x: it.x + 30, y: it.y + 30 }; state.items.push(n); sel = n.id; render(); showProps(); };
+document.getElementById('p-rot').onclick = () => { const it = state.items.find(i => i.id === sel); snap(); it.r = (it.r + 90) % 360; render(); showProps(); };
+document.getElementById('p-dup').onclick = () => { const it = state.items.find(i => i.id === sel); snap(); const n = { ...it, id: state.seq++, x: it.x + 30, y: it.y + 30 }; state.items.push(n); sel = n.id; render(); showProps(); };
+document.getElementById('btn-undo').onclick = undo;
+document.getElementById('btn-redo').onclick = redo;
+['p-name', 'p-w', 'p-h', 'p-r', 'z-name'].forEach(id => document.getElementById(id).addEventListener('focus', () => snap()));
 
 const pi = document.getElementById('pane-items');
 const catBox = document.createElement('div');
@@ -933,7 +981,7 @@ document.getElementById('ck-detail').onchange = e => lDetail.setAttribute('displ
 document.getElementById('ck-grid').onchange = e => lGrid.setAttribute('display', e.target.checked ? 'inline' : 'none');
 document.getElementById('ck-label').onchange = render;
 
-document.getElementById('btn-clear').onclick = () => { if (confirm('清空所有物件與區域？（底圖保留，可在底圖選單換成空白）')) { state = { items: [], zones: [], seq: 1, plan: PLAN_V, floor: state.floor || 'mch2f' }; sel = null; zoneSel = null; render(); hideProps(); hideZProps(); } };
+document.getElementById('btn-clear').onclick = () => { if (confirm('清空所有物件與區域？（底圖保留，可在底圖選單換成空白）')) { snap(); state = { items: [], zones: [], seq: 1, plan: PLAN_V, floor: state.floor || 'mch2f' }; sel = null; zoneSel = null; render(); hideProps(); hideZProps(); } };
 document.getElementById('btn-export').onclick = () => {
   const b = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'mch-layout.json'; a.click();
@@ -942,7 +990,7 @@ document.getElementById('btn-import').onclick = () => document.getElementById('f
 document.getElementById('file').onchange = e => {
   const f = e.target.files[0]; if (!f) return;
   const r = new FileReader();
-  r.onload = () => { state = JSON.parse(r.result); sel = null; render(); };
+  r.onload = () => { snap(); state = JSON.parse(r.result); sel = null; render(); };
   r.readAsText(f);
 };
 document.getElementById('btn-png').onclick = () => {
@@ -992,7 +1040,7 @@ async function fbConnect(cfgText, room) {
       const v = snap.val();
       if (!v || v.by === FB.me) return;
       FB.applying = true;
-      try { state = JSON.parse(v.state); sel = null; render(); hideProps(); } finally { FB.applying = false; }
+      try { snap(); state = JSON.parse(v.state); sel = null; render(); hideProps(); } finally { FB.applying = false; }
       fbStat('已連線 · 房間 ' + room + ' · 剛收到更新', 'on');
     });
     db.onValue(FB.vref, snap => {
@@ -1051,7 +1099,7 @@ function renderVersions() {
     const bl = document.createElement('button'); bl.textContent = '載入';
     bl.onclick = () => {
       if (!confirm('載入「' + v.name + '」？目前畫面會被覆蓋（建議先另存一版）')) return;
-      state = JSON.parse(v.state); sel = null; render(); hideProps();
+      snap(); state = JSON.parse(v.state); sel = null; render(); hideProps();
     };
     const bo = document.createElement('button'); bo.textContent = '覆蓋';
     bo.title = '把目前畫面存進這個版本';
